@@ -2,7 +2,7 @@
 See LICENSE folder for this sample’s licensing information.
 
 Abstract:
-Contains the application's delegate.
+Defines the application's delegate class.
 */
 
 import UIKit

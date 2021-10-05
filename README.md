@@ -1,76 +1,248 @@
 # Classifying Images with Vision and Core ML
 
-Preprocess photos using the Vision framework and classify them with a Core ML model.
+Crop and scale photos using the Vision framework and classify them with a Core ML model.
 
 ## Overview
+The app in this sample identifies the most prominent object in an image by using MobileNet,
+an open source image classifier model that recognizes around 1,000 different categories.
 
-With the [Core ML](https://developer.apple.com/documentation/coreml) framework, you can use a trained machine learning model to classify input data. The [Vision](https://developer.apple.com/documentation/vision) framework works with Core ML to apply classification models to images, and to preprocess those images to make machine learning tasks easier and more reliable.
+![Screenshots of the app identifying a monarch butterfly, broccoli, and a daisy in a field.](Documentation/Screenshots@2x.png)
 
-This sample app uses the open source MobileNet model, one of several [available classification models](https://developer.apple.com/machine-learning), to identify an image using 1000 classification categories as seen in the example screenshots below.
+Each time a user selects a photo from the library or takes a photo with a camera,
+the app passes it to a [Vision][Vision] image classification request.
+Vision resizes and crops the photo to meet the MobileNet model's constraints for its image input,
+and then passes the photo to the model using the [Core ML][Core ML] framework behind the scenes.
+Once the model generates a prediction, Vision relays it back to the app, which presents the results to the user.
 
-![example screenshots of app identifying a potted plant, a fountain, and a bunch of bananas](Documentation/classifications.png)
+[Vision]: https://developer.apple.com/documentation/vision
+[Core ML]: https://developer.apple.com/documentation/coreml
 
-## Getting Started
+The sample uses MobileNet as an example of how to use a third-party Core ML model.
+You can download open source models --- including a newer version of MobileNet --- on the
+[Core ML model gallery][Core ML model gallery].
 
-This sample code project runs on iOS 11. However, you can also use Vision and Core ML in your own apps on macOS 10.13, iOS 11, or tvOS 11.
+[Core ML model gallery]: https://developer.apple.com/machine-learning/models
 
-## Preview the Sample App
+Before you integrate a third-party model to solve a problem
+--- which may increase the size of your app --- consider using an API in the SDK.
+For example, the [Vision][Vision] framework's [VNClassifyImageRequest][VNClassifyImageRequest] class offers the same
+functionality as MobileNet, but with potentially better performance and without increasing the size of your app
+(see [Classifying Images for Categorization and Search][Classifying Images for Categorization and Search]).
 
-To see this sample app in action, build and run the project, then use the buttons in the sample app's toolbar to take a picture or choose an image from your photo library. The sample app then uses Vision to apply the Core ML model to the chosen image, and shows the resulting classification labels along with numbers indicating the confidence level of each classification. It displays the top two classifications in order of the confidence score the model assigns to each.
+[Classifying Images for Categorization and Search]: https://developer.apple.com/documentation/vision/classifying_images_for_categorization_and_search
+[VNClassifyImageRequest]: https://developer.apple.com/documentation/vision/vnclassifyimagerequest
 
-## Set Up Vision with a Core ML Model
+- Note: You can make a custom image classifier that identifies your choice of object types with [Create ML][Create ML].
+See [Creating an Image Classifier Model][Creating an Image Classifier Model]
+to learn how to create a custom image classifier that can replace the MobileNet model in this sample.
 
-Core ML automatically generates a Swift class that provides easy access to your ML model; in this sample, Core ML automatically generates the `MobileNet` class from the `MobileNet` model.  To set up a Vision request using the model, create an instance of that class and use its `model` property  to create a [`VNCoreMLRequest`](https://developer.apple.com/documentation/vision/vncoremlrequest) object. Use the request object's completion handler to specify a method to receive results from the model after you run the request.
+[Create ML]: https://developer.apple.com/documentation/createml
+[Creating an Image Classifier Model]: https://developer.apple.com/documentation/createml/creating_an_image_classifier_model
+
+## Configure the Sample Code Project
+
+The sample targets iOS 14 or later, but the MobileNet model in the project works with:
+
+- iOS 11 or later
+- macOS 10.13 or later
+
+To take photos within the app, run the sample on a device with a camera.
+Otherwise, you can select photos from the library in Simulator.
+
+- Note: Add your own photos to the photo library in Simulator by dragging photos onto its window.
+
+## Create an Image Classifier Instance
+
+At launch, the [`ImagePredictor`][ImagePredictor] class creates an image classifier singleton by calling its
+[`createImageClassifier()`][createImageClassifier] type method.
+
+[ImagePredictor]: x-source-tag://ImagePredictor
+[createImageClassifier]: x-source-tag://createImageClassifier
 
 ``` swift
-let model = try VNCoreMLModel(for: MobileNet().model)
+/// - Tag: name
+static func createImageClassifier() -> VNCoreMLModel {
+    // Use a default model configuration.
+    let defaultConfig = MLModelConfiguration()
 
-let request = VNCoreMLRequest(model: model, completionHandler: { [weak self] request, error in
-    self?.processClassifications(for: request, error: error)
-})
-request.imageCropAndScaleOption = .centerCrop
-return request
-```
-[View in Source](x-source-tag://MLModelSetup)
+    // Create an instance of the image classifier's wrapper class.
+    let imageClassifierWrapper = try? MobileNet(configuration: defaultConfig)
 
-An ML model processes input images in a fixed aspect ratio, but input images may have arbitrary aspect ratios, so Vision must scale or crop the image to fit. For best results, set the request's [`imageCropAndScaleOption`](https://developer.apple.com/documentation/vision/vncoremlrequest/2890144-imagecropandscaleoption) property to match the image layout the model was trained with. For the [available classification models](https://developer.apple.com/machine-learning), the [`centerCrop`](https://developer.apple.com/documentation/vision/vnimagecropandscaleoption/centercrop) option is appropriate unless noted otherwise.
-
-
-## Run the Vision Request
-
-Create a [`VNImageRequestHandler`](https://developer.apple.com/documentation/vision/vnimagerequesthandler) object with the image to be processed, and pass the requests to that object's [`perform(_:)`](https://developer.apple.com/documentation/vision/vnimagerequesthandler/2880297-perform) method. This method runs synchronously—use a background queue so that the main queue isn't blocked while your requests execute.
-
-``` swift
-DispatchQueue.global(qos: .userInitiated).async {
-    let handler = VNImageRequestHandler(ciImage: ciImage, orientation: orientation)
-    do {
-        try handler.perform([self.classificationRequest])
-    } catch {
-        /*
-         This handler catches general image processing errors. The `classificationRequest`'s
-         completion handler `processClassifications(_:error:)` catches errors specific
-         to processing that request.
-         */
-        print("Failed to perform classification.\n\(error.localizedDescription)")
+    guard let imageClassifier = imageClassifierWrapper else {
+        fatalError("App failed to create an image classifier model instance.")
     }
+
+    // Get the underlying model instance.
+    let imageClassifierModel = imageClassifier.model
+
+    // Create a Vision instance using the image classifier's model instance.
+    guard let imageClassifierVisionModel = try? VNCoreMLModel(for: imageClassifierModel) else {
+        fatalError("App failed to create a `VNCoreMLModel` instance.")
+    }
+
+    return imageClassifierVisionModel
 }
 ```
-[View in Source](x-source-tag://PerformRequests)
 
-Most models are trained on images that are already oriented correctly for display. To ensure proper handling of input images with arbitrary orientations, pass the image's orientation to the image request handler. (This sample app adds an initializer, [`init(_:)`](x-source-tag://ConvertOrientation), to the [`CGImagePropertyOrientation`](https://developer.apple.com/documentation/imageio/cgimagepropertyorientation) type for converting from [`UIImageOrientation`](https://developer.apple.com/documentation/uikit/uiimage/orientation) orientation values.)
+The method creates a Core ML model instance for Vision by:
 
-## Handle Image Classification Results
+1. Creating an instance of the model's wrapper class that Xcode auto-generates at compile time
+2. Retrieving the wrapper class instance's underlying ['MLModel'][MLModel] property
+3. Passing the model instance to a [`VNCoreMLModel`][VNCoreMLModel] initializer
 
-The Vision request's completion handler indicates whether the request succeeded or resulted in an error. If it succeeded, its [`results`](https://developer.apple.com/documentation/vision/vnrequest/2867238-results) property contains [`VNClassificationObservation`](https://developer.apple.com/documentation/vision/vnclassificationobservation) objects describing possible classifications identified by the ML model.
+[MLModel]: https://developer.apple.com/documentation/coreml/mlmodel
+[VNCoreMLModel]: https://developer.apple.com/documentation/vision/vncoremlmodel
+
+The Image Predictor class minimizes runtime by only creating a single instance
+it shares across the app.
+
+- Note: Share a single [`VNCoreMLModel`][VNCoreMLModel] instance for each Core ML model
+in your project.
+
+## Create an Image Classification Request
+
+The Image Predictor class creates an image classification request ---
+a [`VNCoreMLRequest`][VNCoreMLRequest] instance ---
+by passing the shared image classifier model instance and a request handler to its initializer.
+
+[VNCoreMLRequest]: https://developer.apple.com/documentation/vision/vncoremlrequest
 
 ``` swift
-func processClassifications(for request: VNRequest, error: Error?) {
-    DispatchQueue.main.async {
-        guard let results = request.results else {
-            self.classificationLabel.text = "Unable to classify image.\n\(error!.localizedDescription)"
-            return
-        }
-        // The `results` will always be `VNClassificationObservation`s, as specified by the Core ML model in this project.
-        let classifications = results as! [VNClassificationObservation]
+// Create an image classification request with an image classifier model.
+
+let imageClassificationRequest = VNCoreMLRequest(model: ImagePredictor.imageClassifier,
+                                                 completionHandler: visionRequestHandler)
+
+imageClassificationRequest.imageCropAndScaleOption = .centerCrop
 ```
-[View in Source](x-source-tag://ProcessClassifications)
+
+The method tells Vision how to adjust images that don't meet the model's image input constraints
+by setting the request's [`imageCropAndScaleOption`][imageCropAndScaleOption] property to
+[`centerCrop`][centerCrop].
+
+[imageCropAndScaleOption]: https://developer.apple.com/documentation/vision/vncoremlrequest/2890144-imagecropandscaleoption
+[centerCrop]: https://developer.apple.com/documentation/vision/vnimagecropandscaleoption/centercrop
+
+## Create a Request Handler
+
+The Image Predictor's [`makePredictions(for photo, ...)`][makePredictions] method creates a
+[`VNImageRequestHandler`][VNImageRequestHandler]
+for each image by passing the image and its orientation to the initializer.
+
+[makePredictions]: x-source-tag://makePredictions
+[VNImageRequestHandler]: https://developer.apple.com/documentation/vision/vnimagerequesthandler
+
+``` swift
+let handler = VNImageRequestHandler(cgImage: photoImage, orientation: orientation)
+```
+
+Vision rotates the image based on `orientation`
+--- a [`CGImagePropertyOrientation`][CGImagePropertyOrientation] instance ---
+before sending the image to the model.
+
+[CGImagePropertyOrientation]: https://developer.apple.com/documentation/imageio/cgimagepropertyorientation
+
+If the image you want to classify has a URL, create a Vision image request handler with one of these initializers:
+* [`VNImageRequestHandler(url:options:)`][VNImageRequestHandler(url:options:)]
+* [`VNImageRequestHandler(url:orientation:options:)`][VNImageRequestHandler(url:orientation:options:)]
+
+[VNImageRequestHandler(url:options:)]: https://developer.apple.com/documentation/vision/vnimagerequesthandler/2866553-init
+[VNImageRequestHandler(url:orientation:options:)]: https://developer.apple.com/documentation/vision/vnimagerequesthandler/2869645-init
+
+## Start the Request
+The [`makePredictions(for photo, ...)`][makePredictions] method starts the request by adding it into a
+[`VNRequest`][VNRequest] array and passes it to the handler's [`perform(_:)`][VNImageRequestHandler.perform] method.
+
+[VNRequest]: https://developer.apple.com/documentation/vision/vnrequest
+[VNImageRequestHandler.perform]: https://developer.apple.com/documentation/vision/vnimagerequesthandler/2880297-perform
+
+``` swift
+let requests: [VNRequest] = [imageClassificationRequest]
+
+// Start the image classification request.
+try handler.perform(requests)
+```
+
+- Note: You can perform multiple Vision requests on the same image by adding each request to the array you pass
+to the [`perform(_:)`][VNImageRequestHandler.perform] method's `requests` parameter.
+
+## Retrieve the Request's Results
+
+When the image classification request is finished, Vision notifies the Image Predictor
+by calling the request's completion handler, [`visionRequestHandler(_:error:)`][visionRequestHandler].
+The method retrieves the request's [`results`][VNRequest.results] by:
+
+[visionRequestHandler]: x-source-tag://visionRequestHandler
+[VNRequest.results]: https://developer.apple.com/documentation/vision/vnrequest/2867238-results
+
+1. Checking the `error` parameter
+2. Casting [`results`][VNRequest.results]
+to a [`VNClassificationObservation`][VNClassificationObservation] array
+
+[VNClassificationObservation]: https://developer.apple.com/documentation/vision/vnclassificationobservation
+
+``` swift
+// Cast the request's results as an `VNClassificationObservation` array.
+guard let observations = request.results as? [VNClassificationObservation] else {
+    // Image classifiers, like MobileNet, only produce classification observations.
+    // However, other Core ML model types can produce other observations.
+    // For example, a style transfer model produces `VNPixelBufferObservation` instances.
+    print("VNRequest produced the wrong result type: \(type(of: request.results)).")
+    return
+}
+
+// Create a prediction array from the observations.
+predictions = observations.map { observation in
+    // Convert each observation into an `ImagePredictor.Prediction` instance.
+    Prediction(classification: observation.identifier,
+               confidencePercentage: observation.confidencePercentageString)
+}
+```
+
+The Image Predictor converts each result to [`Prediction`][Prediction] instances,
+a simple structure with two string properties.
+
+[Prediction]: x-source-tag://Prediction
+
+The method sends the `predictions` array to the Image Predictor's client --- the main view controller ---
+by calling the client's completion handler.
+
+``` swift
+// Send the predictions back to the client.
+predictionHandler(predictions)
+```
+
+## Format and Present the Predictions
+
+The main view controller's [`imagePredictionHandler(_:)`][imagePredictionHandler] method formats the
+individual predictions into a single string and updates a label in the app's UI using helper methods.
+
+[imagePredictionHandler]: x-source-tag://imagePredictionHandler
+
+``` swift
+private func imagePredictionHandler(_ predictions: [ImagePredictor.Prediction]?) {
+    guard let predictions = predictions else {
+        updatePredictionLabel("No predictions. (Check console log.)")
+        return
+    }
+
+    let formattedPredictions = formatPredictions(predictions)
+
+    let predictionString = formattedPredictions.joined(separator: "\n")
+    updatePredictionLabel(predictionString)
+}
+```
+
+The [`updatePredictionLabel(_:)`][updatePredictionLabel] helper method safely updates the UI by updating
+the label's text on the main dispatch queue.
+
+[updatePredictionLabel]: x-source-tag://updatePredictionLabel
+
+``` swift
+func updatePredictionLabel(_ message: String) {
+    DispatchQueue.main.async {
+        self.predictionLabel.text = message
+    }
+```
+
+- Important: Keep your app's UI responsive by making predictions with Core ML models off of the main thread.
