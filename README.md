@@ -37,7 +37,7 @@ See [Creating an Image Classifier Model][Creating an Image Classifier Model]
 to learn how to create a custom image classifier that can replace the MobileNet model in this sample.
 
 [Create ML]: https://developer.apple.com/documentation/createml
-[Creating an Image Classifier Model]: https://developer.apple.com/documentation/createml/creating_an_image_classifier_model
+[Creating an Image Classifier Model]: https://developer.apple.com/documentation/createml/creating-an-image-classifier-model
 
 ## Configure the Sample Code Project
 
